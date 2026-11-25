@@ -838,6 +838,29 @@
   (output overloading-single-valued g/Any :cached (g/fnk [overloading-single-valued] overloading-single-valued))
   (property valid-on-overloading-single-valued g/Any))
 
+;; Array inputs and same-named passthrough outputs resolve their sources in
+;; the supplied basis, even after the connections have changed.
+(deftest immediate-predecessor-endpoints-follow-connected-inputs-test
+  (with-clean-system
+    (let [first-source-id (g/make-node! OutputFunctionArgumentsNode)
+          second-source-id (g/make-node! OutputFunctionArgumentsNode)
+          target-id (g/make-node! ValidationUsesInputs)
+          disconnected-basis (g/now)
+          first-endpoint (g/endpoint first-source-id :a)
+          second-endpoint (g/endpoint second-source-id :b)]
+      (g/transact
+        [(g/connect first-source-id :a target-id :multi-valued)
+         (g/connect second-source-id :b target-id :multi-valued)
+         (g/connect second-source-id :b target-id :overloading-single-valued)])
+
+      (let [connected-basis (g/now)]
+        (are [basis label expected]
+          (= expected (g/immediate-predecessor-endpoints basis target-id label))
+          disconnected-basis :multi-valued []
+          disconnected-basis :overloading-single-valued []
+          connected-basis :multi-valued [first-endpoint second-endpoint]
+          connected-basis :overloading-single-valued [second-endpoint])))))
+
 (g/defnode PropertyWithSetter
   (property string-property g/Str
             (set (fn [evaluation-context self old-value new-value]))))
@@ -901,7 +924,8 @@
 (g/defnode OutputsReadingOwnProperty
   (inherits PropertiesWithDynamics)
   (output a-property g/Any (g/fnk [a-property] a-property))
-  (output overridden g/Any (g/fnk [^:raw overridden] overridden)))
+  (output overridden g/Any (g/fnk [^:raw overridden] overridden))
+  (output cached-raw-value g/Any :cached (g/fnk [overridden] overridden)))
 
 ;; An input used only by dynamics affects the property maps, including when an
 ;; explicit output shadows the property. Value consumers track the getter.
@@ -936,6 +960,23 @@
           (is (not (contains? (cached-endpoints) property-map-endpoint)))
           (is (= 21
                  (get-in (g/node-value target-id :_declared-properties) value-path))))))))
+
+;; Changing the getter's input keeps the raw consumer cached. Writing the
+;; property gives the consumer the new stored value.
+(deftest raw-property-output-cache-test
+  (with-clean-system
+    (let [source-id (g/make-node! OutputFunctionArgumentsNode :b 10)
+          target-id (g/make-node! OutputsReadingOwnProperty :overridden 42)
+          cached-endpoint (g/endpoint target-id :cached-raw-value)]
+      (g/connect! source-id :b target-id :shadowed-getter-input)
+      (is (= 42 (g/node-value target-id :cached-raw-value)))
+
+      (g/set-property! source-id :b 20)
+      (is (contains? (cached-endpoints) cached-endpoint))
+      (is (= 42 (g/node-value target-id :cached-raw-value)))
+
+      (g/set-property! target-id :overridden 43)
+      (is (= 43 (g/node-value target-id :cached-raw-value))))))
 
 (g/defnode CustomPropertiesOutput
   (output _properties g/Properties :cached

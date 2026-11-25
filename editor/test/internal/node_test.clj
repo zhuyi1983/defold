@@ -319,8 +319,11 @@
 (deftest dependency-loops
   (testing "output dependent on itself"
     (with-clean-system
-      (let [[node] (tx-nodes (g/make-node DependencyNode))]
-        (is (thrown? ExceptionInfo (g/node-value node :out-from-self))))))
+      (let [node-id (g/make-node! DependencyNode)
+            basis (g/now)]
+        (is (= [(g/endpoint node-id :out-from-self)]
+               (g/immediate-predecessor-endpoints basis node-id :out-from-self)))
+        (is (thrown? ExceptionInfo (g/node-value node-id :out-from-self))))))
   (testing "output dependent on itself connected to downstream input"
     (with-clean-system
       (let [[node0 node1] (tx-nodes (g/make-node DependencyNode) (g/make-node DependencyNode))]

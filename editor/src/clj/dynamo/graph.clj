@@ -1483,18 +1483,30 @@
         (remove in/synthesized-arguments)
         (mapcat
           (fn [dependency-label]
-            (if (not= label dependency-label)
+            (cond
+              (not= label dependency-label)
               [(endpoint node-id dependency-label)]
+
               ;; A passthrough output reads the input of the same name.
-              (when (has-input? node-type label)
-                (input-source-endpoints basis node-id label))))))
+              (has-input? node-type label)
+              (input-source-endpoints basis node-id label)
+
+              ;; A same-named property supplies the value locally.
+              (has-property? node-type label)
+              []
+
+              :else
+              [(endpoint node-id label)]))))
       (when (has-input? node-type label)
         (input-source-endpoints basis node-id label)))))
 
 (defn immediate-predecessor-endpoints
   "Returns the declared dependencies of a label in the supplied basis.
 
-  Follows inputs to connected outputs and skips synthesized fnk arguments."
+  Follows inputs to connected outputs and skips synthesized fnk arguments.
+  A property and a same-named output share an endpoint. Following that endpoint
+  can show dependencies of the output even when the consumer reads the stored
+  property value with ^:raw."
   [basis node-id label]
   (predecessor-endpoints
     basis node-id label

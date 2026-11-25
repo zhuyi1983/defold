@@ -184,7 +184,7 @@ Intrinsic outputs and properties:
     (property _node-id g/NodeID :unjammable)
     (property _output-jammers g/KeywordMap :unjammable)
     (output _properties g/Properties (g/fnk [_declared-properties] _declared-properties))
-    (output _overridden-properties g/KeywordMap (g/fnk [_this _basis] (gt/overridden-properties _this _basis)))
+    (output _overridden-properties g/KeywordMap (g/fnk [_this] (gt/overridden-properties _this)))
 ```
 
 ### Behavior of inputs, property and outputs
@@ -363,7 +363,7 @@ Our forms are now:
     ((property _node-id :dynamo.graph/NodeID :unjammable)
      (property _output-jammers :dynamo.graph/KeywordMap :unjammable)
      (output _properties :dynamo.graph/Properties (dynamo.graph/fnk [_declared-properties] _declared-properties))
-     (output _overridden-properties :dynamo.graph/KeywordMap (dynamo.graph/fnk [_this _basis] (internal.graph.types/overridden-properties _this _basis))))
+     (output _overridden-properties :dynamo.graph/KeywordMap (dynamo.graph/fnk [_this] (internal.graph.types/overridden-properties _this))))
 ```
 
 The properties `_node-id` and `_output-jammers` are `:unjammable`
@@ -408,30 +408,20 @@ do `g/node-value` for these properties.
       {:value-type {:k :dynamo.graph/KeywordMap},
        :flags #{:explicit},
        :options {},
-       :fn (dynamo.graph/fnk [_this _basis] (internal.graph.types/overridden-properties _this _basis))}}}
+       :fn (dynamo.graph/fnk [_this] (internal.graph.types/overridden-properties _this))}}}
 ```
-After this step, nothing really exciting happens until we extract the
-used argument names and lift the property dependencies.
 
-#### Arguments extracted, property dependencies lifted
+#### Arguments extracted from production functions
 
-The relevant difference is that arguments to the `fnk`s have now been
-pulled out to `:argument` and `:dependencies` sets next to the
-`:fn`. We also have `:key`, `:name`, `:supertypes`, `:input` and
-`:display-order-decl` entries. The `:supertypes`, `:input` and
-`:display-order-decl` comes from the implementation of
+Each production function now has an `:arguments` set and an initial
+`:dependencies` set next to its `:fn`. We also have `:key`, `:name`,
+`:supertypes`, `:input` and `:display-order-decl` entries. The `:supertypes`,
+`:input` and `:display-order-decl` entries come from the implementation of
 inheritance. **Slightly sloppy in merge-supertypes, no real problem
 though**
 ```clj
     {:property-display-order (internal.node/merge-display-order nil []),
      :key :internal.defnode-test/EmptyNodeType,
-     :property
-     {:_node-id
-      {...
-       :dependencies #{}},
-      :_output-jammers
-      {...
-       :dependencies #{}}},
      ...
      :name "internal.defnode-test/EmptyNodeType",
      :output
@@ -452,9 +442,9 @@ though**
        :dependencies #{:_declared-properties}},
       :_overridden-properties
       {...
-       :fn (dynamo.graph/fnk [_this _basis] (internal.graph.types/overridden-properties _this _basis)),
-       :arguments #{:_basis :_this},              ; <-
-       :dependencies #{:_basis :_this}}},
+       :fn (dynamo.graph/fnk [_this] (internal.graph.types/overridden-properties _this)),
+       :arguments #{:_this},                      ; <-
+       :dependencies #{:_this}}},
      ...
      :supertypes nil,
      :input nil,
@@ -466,8 +456,7 @@ though**
      :input-dependencies
      {:_node-id #{:_node-id},
       :_output-jammers #{:_output-jammers},
-      :_declared-properties #{:_properties},
-      :_basis #{:_overridden-properties}},
+      :_declared-properties #{:_properties}},
      ...
      :output
      {...
@@ -505,11 +494,8 @@ Explanation in code comments.
                    ;; Otherwise, we trace that an output is being produced
                    (internal.node/trace-expr node-id label evaluation-context :output
                                              (fn []
-                                               ;; Collect the arguments. Looking at the _overridden-properties definition in node-intrinsics,
-                                               ;; it takes _this (the node) and _basis. All production functions are always passed _node-id and _basis.
-                                               (let [arguments {:_basis (:basis evaluation-context),
-                                                                :_this node,
-                                                                :_node-id node-id}]
+                                               ;; The _overridden-properties producer takes the node as its only argument.
+                                               (let [arguments {:_this node}]
                                                  ;; The result is either
                                                  ;; * an aggregated error from the arguments - not likely here :)
                                                  ;; * nil, if this was a :dry-run (this skips calling the actual production functions)
@@ -558,9 +544,7 @@ Explanation in code comments.
                                              (fn []
                                                ;; Collect arguments. Looking at the production function, _declared-properties is an argument.
                                                ;; Since this is another output, we effectively recurse and produce it.
-                                               (let [arguments {:_declared-properties (internal.graph.types/produce-value node :_declared-properties evaluation-context),
-                                                                :_node-id node-id,
-                                                                :_basis (:basis evaluation-context)}]
+                                               (let [arguments {:_declared-properties (internal.graph.types/produce-value node :_declared-properties evaluation-context)}]
                                                  ;; Note! We treat the '_properties' output specially and don't do any argument error checking.
                                                  ;; If you provide an overriding definition of _properties and refer to something that produces
                                                  ;; an error, the corresponding argument will be an error value. This is different from all other
@@ -799,7 +783,7 @@ Here we demonstrate
     (g/defnode CustomProperty
       (property simple-property g/Str)
       (property custom-property g/Str
-                (default (fn [] "fruit"))
+                (default "fruit")
                 (value (g/fnk [simple-property custom-property]
                          (str simple-property custom-property)))
                 (dynamic matches-input (g/fnk [custom-property simple-input]
@@ -832,9 +816,7 @@ And the corresponding behavior in the `:behavior` section:
                          :custom-property (internal.node/trace-expr node-id :custom-property evaluation-context :raw-property
                                                                     (fn []
                                                                       (when-not (:dry-run evaluation-context)
-                                                                        (internal.graph.types/get-property node (:basis evaluation-context) :custom-property)))),
-                         :_node-id node-id,
-                         :_basis (:basis evaluation-context)}]
+                                                                        (internal.graph.types/get-property node (:basis evaluation-context) :custom-property))))}]
           (let [result (or (internal.node/argument-error-aggregate node-id label arguments)
                            (when-not (:dry-run evaluation-context)
                              (#'internal.defnode-test/CustomProperty$output$custom-property arguments)))]
@@ -878,7 +860,7 @@ here in the `:property` map. This version will be used for
      {:value-type {:k :dynamo.graph/Str},
       :flags #{},
       :options {},
-      :default {:fn (fn* ([] "fruit")), :arguments #{}, :dependencies #{}},
+      :default {:fn (dynamo.graph/fnk [] "fruit"), :arguments #{}, :dependencies #{}},
       :value
       {:fn (g/fnk [simple-property custom-property] (str simple-property custom-property)),
        :arguments #{:simple-property :custom-property},
@@ -887,8 +869,7 @@ here in the `:property` map. This version will be used for
       {:matches-input
        {:fn (g/fnk [custom-property simple-input] (= custom-property simple-input)),
         :arguments #{:simple-input :custom-property},
-        :dependencies #{:simple-input :custom-property}}},
-      :dependencies #{:simple-property :simple-input}}}
+        :dependencies #{:simple-input :custom-property}}}}}
 ```
 All these `fn`'s will be emitted as `def`'s by `defnode` and the node
 type map updated with the corresponding vars.
@@ -898,9 +879,21 @@ provide values if none were supplied.
 
 #### How the properties end up in `_properties`, and property dynamics
 
-The intrinsic version of `_properties` just passes through
-`_declared-properties`. Looking at the `_declared-properties` behavior
-for this node type:
+The cached `_declared-properties` output lists both property labels as
+arguments. Its dependencies also include `:simple-input`, which feeds the
+`:matches-input` dynamic. The intrinsic `_properties` output reads this map.
+
+```clj
+    (select-keys (:_declared-properties (g/declared-outputs CustomProperty))
+                 [:arguments :dependencies])
+    ;; => {:arguments #{:simple-property :custom-property}
+    ;;     :dependencies #{:simple-property :custom-property :simple-input}}
+```
+
+Changing `:simple-input` refreshes the property map while cached consumers of
+`:custom-property` keep their value. The generated behavior evaluates the getter
+and the dynamic when building the map.
+
 ```clj
     (fn [node label evaluation-context]
       (let [node-id (internal.graph.types/node-id node)
@@ -938,13 +931,13 @@ for this node type:
            :display-order display-order,
            :node-id node-id}))
 ```
-### OverridenProperty
+### OverriddenProperty
 
 Lets have a look what happens when you have an output with the same
 name as a property.
 ```clj
     (g/defnode OverriddenProperty
-      (property data g/Str (value (g/fnk [] 1)))
+      (property data g/Str (value (g/fnk [] "value")))
       (input nonsense-input g/Str)
       (output data g/Str (g/fnk [data nonsense-input]
                            (str data nonsense-input))))
@@ -970,15 +963,17 @@ remains, but the definition in `:property` remains.
       {:value-type {:k :dynamo.graph/Str},
        :flags #{},
        :options {},
-       :value {:fn (g/fnk [] 1), :arguments #{}, :dependencies #{}},
-       :dependencies #{}}}
+       :value {:fn (g/fnk [] "value"), :arguments #{}, :dependencies #{}}}}
     }
 ```
 If you look into the code generated for the data output behavior, you
 would find that it calls
 `#'internal.defnode-test/OverriddenProperty$property$data$value` to get the property value. 
-Same thing for the `_declared-properties` output and the
-`:property-behavior` for data.
+The `_declared-properties` output and the `:property-behavior` for `:data` also
+call that getter. When inspecting the predecessors of `_declared-properties`,
+following `:data` visits `:nonsense-input` through the same-named output. A
+change to that input therefore evicts the property map even though its `:data`
+entry still contains `"value"`.
 
 ### InputVarieties
 
