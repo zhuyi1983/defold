@@ -274,12 +274,12 @@ The arguments of a production function (property `(value ...)` clause,
 outputs or properties in the node definition. The declaration order of
 these have no impact.
 
-Declaring an explicit `output` with the same name as a `property`
-(overriding the property) requires special care. If you refer to the
-shared name in the argument list of the output production function,
-that argument is assumed to refer to the property. For any other
-production function, using that name in the argument list will refer
-to the output - not the property.
+When an explicit `output` and a `property` share a name, an unannotated
+argument with that name reads the property through its getter in the
+output's own production function. In a production function for a different
+label, the same argument reads the explicit output. Tagging the argument
+`^:raw`, as in `(g/fnk [^:raw data] data)`, reads the stored property
+value directly in either case.
 
 Similarly you can declare an explicit `output` with the same name as
 an `input`. Here, the name will refer to the input when used in the
@@ -877,6 +877,17 @@ type map updated with the corresponding vars.
 The `:default` function will by called when constructing a new node to
 provide values if none were supplied.
 
+Earlier versions of `g/declared-properties` exposed an aggregate
+`:dependencies` set on each property descriptor. To see which labels a
+getter or dynamic attribute reads, look up that clause on the descriptor.
+
+```clj
+    (let [property (:custom-property (g/declared-properties CustomProperty))]
+      [(get-in property [:value :dependencies])
+       (get-in property [:dynamics :matches-input :dependencies])])
+    ;; => [#{:simple-property :custom-property} #{:custom-property :simple-input}]
+```
+
 #### How the properties end up in `_properties`, and property dynamics
 
 The cached `_declared-properties` output lists both property labels as
@@ -1029,9 +1040,7 @@ collecting arguments, perform the error substitution:
                                           (fn [inputs]
                                             (map (fn* [p1__26365#]
                                                       (if (g/error? p1__26365#) "error!" p1__26365#))
-                                                 inputs))),
-                     :_node-id node-id,
-                     :_basis (:basis evaluation-context)}]
+                                                 inputs)))}]
 ```
 ### CachedOutputs
 
@@ -1062,9 +1071,7 @@ difference is only what caches we use for lookup and update.
                    result
 				   (internal.node/trace-expr node-id label evaluation-context :output
                                              (fn []
-                                               (let [arguments {:data (internal.graph.types/produce-value node :data evaluation-context),
-                                                                :_node-id node-id,
-                                                                :_basis (:basis evaluation-context)}]
+                                               (let [arguments {:data (internal.graph.types/produce-value node :data evaluation-context)}]
                                                  (let [result (or (internal.node/argument-error-aggregate node-id label arguments)
                                                                   (when-not (:dry-run evaluation-context)
                                                                     (#'internal.defnode-test/CachedOutputs$output$cached
@@ -1095,9 +1102,7 @@ difference is only what caches we use for lookup and update.
                                                  result)))
                    (internal.node/trace-expr node-id label evaluation-context :output
                                              (fn []
-                                               (let [arguments {:data (internal.graph.types/produce-value node :data evaluation-context),
-                                                                :_node-id node-id,
-                                                                :_basis (:basis evaluation-context)}]
+                                               (let [arguments {:data (internal.graph.types/produce-value node :data evaluation-context)}]
                                                  (let [result (or (internal.node/argument-error-aggregate node-id label arguments)
                                                                   (when-not (:dry-run evaluation-context)
                                                                     (#'internal.defnode-test/CachedOutputs$output$non-cached
